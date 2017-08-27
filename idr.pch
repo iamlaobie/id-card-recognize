@@ -1,0 +1,140 @@
+//
+//  idr.pch
+//  opencv
+//
+//  Created by iamlaobie on 15/8/16.
+//  Copyright (c) 2015年 iamlaobie. All rights reserved.
+//
+
+#ifndef opencv_idr_pch
+#define opencv_idr_pch
+
+// Include any system framework and library headers here that should be included in all compilation units.
+// You will also need to set the Prefix Header build setting of one or more of your targets to reference this file.
+#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc/imgproc.hpp"
+#include <cmath>
+#include <sys/time.h>
+#include <iostream>
+#include <stdio.h>
+#include <stdlib.h>
+#include <map>
+#endif
+
+using namespace cv;
+using namespace std;
+
+bool rectSortByX( Rect v1, Rect v2)
+{
+    return v1.x < v2.x;
+}
+
+
+void rotateByAngle(Mat src, Mat dst, double angle)
+{
+    Mat m = getRotationMatrix2D(Point2f(src.cols / 2.0, src.rows / 2.0), angle, 1.0);
+    warpAffine(src, dst, m, Size(src.cols, src.rows));
+    m.release();
+}
+
+//过滤出文字
+vector<Rect> findWordRect(vector<vector<Point> > contours)
+{
+    vector<vector<Point>> contours_poly( contours.size() );
+    vector<Rect> boundRect( contours.size() );
+    vector<Rect>::iterator it = boundRect.begin();
+    int cnt = 0;
+    for( int i = 0; i < contours.size(); i++ )
+    {
+        approxPolyDP( Mat(contours[i]), contours_poly[i], 3, true );
+        Rect r = boundingRect( Mat(contours_poly[i]) );
+        if (r.height > 20 && r.height < 50 && r.width >= 10 && r.width < 50) {
+            cnt ++;
+            it = boundRect.insert(it, r);
+        }
+    }
+    boundRect.resize(cnt);
+    boundRect.shrink_to_fit();
+    return boundRect;
+}
+
+//沿Y轴对文字聚类
+map<int, vector<Rect>> clusterByY(vector<Rect> rects)
+{
+    sort(rects.begin(), rects.end(), rectSortByX);
+    map<int, int>::iterator mit;
+    map<int, vector<Rect>> mRect;
+    map<int, vector<Rect>>::iterator mrit = mRect.begin();
+    bool finded = false;
+    for (int i = 0; i < rects.size(); i++) {
+        Rect r = rects[i];
+        finded = false;
+        for (mrit = mRect.begin(); mrit != mRect.end(); ++mrit) {
+            if ((r.y < mrit->first + 40) &&  r.y > (mrit->first - 40)) {
+                finded = true;
+                mrit->second.push_back(r);
+                if (r.y != mrit->first) {
+                    int sum = 0, y = 0;
+                    vector<Rect> rr;
+                    for (int j = 0; j < mrit->second.size(); j++) {
+                        sum += mrit->second[j].y;
+                        rr.push_back(mrit->second[j]);
+                    }
+                    y = sum / mrit->second.size();
+                    if (y != mrit->first) {
+                        mRect.insert(make_pair(y, rr));
+                        mRect.erase(mrit);
+                    }
+                }
+                break;
+            }
+        }
+        if (!finded) {
+            vector<Rect> rr;
+            rr.push_back(r);
+            mRect.insert(make_pair(r.y, rr));
+        }
+    }
+    for (mrit = mRect.begin(); mrit != mRect.end(); ++mrit) {
+        if (mrit->second.size() < 4) {
+            mRect.erase(mrit);
+        }
+    }
+    return mRect;
+}
+
+Rect getNameStart (map<int, vector<Rect>> cluster)
+{
+    map<int, vector<Rect>>::iterator it = cluster.begin();
+    return it->second[0];
+}
+
+int getMaxCluster(map<int, vector<Rect>> cluster)
+{
+    map<int, vector<Rect>>::iterator it = cluster.begin();
+    map<int, vector<Rect>>::iterator maxIt;
+    long maxCnt = 0;
+    for (; it != cluster.end(); ++it) {
+        if (it->second.size() > maxCnt) {
+            maxCnt = it->second.size();
+            maxIt = it;
+        }
+    }
+    return maxIt->first;
+}
+
+double getAngle(Rect r1, Rect r2)
+{
+    double soble = (double)(r2.y - r1.y) / (double)(r2.x - r1.x);
+    double angle = 180.0 * atan(soble) / M_PI;
+    return angle;
+}
+
+Mat thresholdByBright(Mat src)
+{
+    Scalar bdMean = mean(src);
+    double bright = bdMean.val[0];
+    Mat dst = Mat(src.size(), src.type());
+    threshold( src, dst, bright * 0.75, 255, THRESH_BINARY);
+    return dst;
+}
